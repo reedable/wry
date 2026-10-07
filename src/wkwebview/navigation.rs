@@ -82,6 +82,9 @@ pub(crate) fn navigation_policy(
   }
 }
 
+#[path = "response_policy.rs"]
+mod response_policy;
+
 // Navigation handler
 pub(crate) fn navigation_policy_response(
   this: &WryNavigationDelegate,
@@ -92,12 +95,30 @@ pub(crate) fn navigation_policy_response(
   unsafe {
     let can_show_mime_type = response.canShowMIMEType();
 
-    if !can_show_mime_type {
-      let has_download_handler = this.ivars().has_download_handler;
-      if has_download_handler {
-        (*handler).call((WKNavigationResponsePolicy::Download,));
-        return;
-      }
+    #[cfg(all(target_os = "macos", feature = "macos-download-pdf"))]
+    let force_pdf_download = {
+      let resource = response.response();
+      let mime = resource.MIMEType().map(|value| value.to_string());
+      let scheme = resource
+        .URL()
+        .and_then(|url| url.scheme())
+        .map(|value| value.to_string());
+      response_policy::force_pdf_download(
+        response.isForMainFrame(),
+        scheme.as_deref(),
+        mime.as_deref(),
+      )
+    };
+    #[cfg(not(all(target_os = "macos", feature = "macos-download-pdf")))]
+    let force_pdf_download = false;
+
+    if response_policy::should_download(
+      this.ivars().has_download_handler,
+      can_show_mime_type,
+      force_pdf_download,
+    ) {
+      (*handler).call((WKNavigationResponsePolicy::Download,));
+      return;
     }
 
     (*handler).call((WKNavigationResponsePolicy::Allow,));
